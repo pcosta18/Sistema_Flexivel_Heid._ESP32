@@ -1,4 +1,5 @@
 String ESPrx = ""; //Mensagem recebida no Rx do esp incluindo caracteres de controlo
+String ESPrx0 = ""; //Mensagem recebida no Rx do esp incluindo caracteres de controlo
 String telegramaRecebido = ""; //Mensagem recebida no Rx do esp sem caracteres de controlo, apenas o telegrama
 String MensagemEnviar = ""; // Mensagem a enviar no telegrama da fase de transferencia de dados
 bool FaseInquerito = false;
@@ -38,20 +39,43 @@ void setup() {
 
 void loop() {
   /* Recepção pela porta série (A que vem da CNC) */
-  int bytestoread = Serial.available();
+
+  int bytestoread2 = Serial.available();
+  if (bytestoread2 > 0) {
+    delay(200);
+    Serial.print("tenho estes bytes para ler da porta 0: ");
+    Serial.println(bytestoread2);
+    byte rx0[bytestoread2];
+    Serial.readBytes(rx0, bytestoread2);
+
+    for (int i = 0; i < (bytestoread2) ; i++) {
+      ESPrx2 += (char)rx0[i];
+    }
+
+    if ( ESPrx2 == "lsv2_EnviarFicheiroNC" ) {
+      Serial.println("Eu percebi que é para começar a enviar um ficheiro ");
+      espEmissor = true;
+      EnviarFicheiro_Controlo = true;
+      lsv2_FaseInquerito();
+    }
+    ESPrx2 = "";
+  }
+
+  int bytestoread = Serial2.available();
   if (bytestoread > 0) {
     delay(200);
-    Serial.print("tenho estes bytes para ler: ");
+    Serial.print("tenho estes bytes para ler da porta 2 (CNC): ");
     Serial.println(bytestoread);
     byte rx[bytestoread];
-    Serial.readBytes(rx, bytestoread);
+    Serial2.readBytes(rx, bytestoread);
 
     for (int i = 0; i < (bytestoread) ; i++) {
       ESPrx += (char)rx[i];
     }
-    Serial.print("A mensagem é esta: ");
+    Serial.print("A mensagem que chegou é esta: ");
     Serial.println(ESPrx);
     /* Para saber quais são as mensagens que temos que enviar */
+
     if (EnviarFicheiro_Controlo) {
       lsv2_EnviarFicheiroNC();
     }
@@ -101,14 +125,14 @@ void loop() {
 void lsv2_FaseInquerito() {
 
   if (espRecetor) {
-    byte buff[5] = {16, 48};    // DLE 0
-    Serial.write(buff, 2);
+    byte buff[] = {16, 48};    // DLE 0
+    Serial2.write(buff, 2);
     Serial.println("Enviei o caracter 16 48");
     espRecetor = false;
   }
   if (espEmissor) {
-    Serial.write(5);
-    Serial.println("Eu percebi o caracter 5 ");
+    Serial2.write(5);
+    Serial.println("Eu enviei o caracter 5 ");
     espEmissor = false;
   }
   ESPrx = "";
@@ -124,13 +148,12 @@ void lsv2_TransferenciaDeDados() {
     Serial.print("A mensagem recebida foi: ");
     Serial.println(telegramaRecebido);
     byte buff[2] = {16, 49};
-    Serial.write(buff, 2);
-    Serial.println("Eu percebi o caracter 16 49 ");
+    Serial2.write(buff, 2);
+    Serial.println("Eu mandei os caracteres 16 49 ");
     espRecetor = false;
   }
 
   if (espEmissor) {
-
     int tamanhoMensagem = MensagemEnviar.length();
     byte buffByte[tamanhoMensagem + 5];
     for (int i = 0; i < tamanhoMensagem; i++) {
@@ -146,9 +169,9 @@ void lsv2_TransferenciaDeDados() {
         buffByte[tamanhoMensagem + 3] = 3;
         buffByte[tamanhoMensagem + 4] = BCC(MensagemEnviar);
       }
-
     }
-    Serial.write(buffByte, (tamanhoMensagem + 5));
+    
+    Serial2.write(buffByte, (tamanhoMensagem + 5));
     Serial.println("Mensagem que enviei foi");
     Serial.println(MensagemEnviar);
     espEmissor = false;
@@ -164,7 +187,7 @@ void lsv2_FaseRepouso() {
   //Se eu receber o EOT não preciso de fazer nada, só se quiser enviar
   if (espEmissor) {
     // Enviar o caracter EOT
-    Serial.write(4);
+    Serial2.write(4);
     Serial.println("Mandei o caracter 4");
     espEmissor = false;
   }
@@ -178,9 +201,8 @@ void lsv2_EnviarFicheiroNC() {
 
   // Enviar ENQ para estabelecer uma comunicação e estabelecer a primeira mensagem a ser enviada
   if (EnviarFicheiro_Counter == 0 ) {
-    espEmissor = true;
+    telegramaRecebido = "";
     MensagemEnviar = "A_LGFILE";
-    lsv2_FaseInquerito();
     EnviarFicheiro_Counter++;
   }
   // Enviar o Nome do Ficheiro
@@ -212,7 +234,7 @@ void lsv2_EnviarFicheiroNC() {
     espEmissor = true;
     lsv2_FaseRepouso();
     delay(400);
-    Serial.write(5);
+    Serial2.write(5);
     MensagemEnviar = "A_LO";
     EnviarFicheiro_Counter++;
   }
@@ -226,8 +248,8 @@ void lsv2_EnviarFicheiroNC() {
 
   // Isto está aqui porque quando recebemos o T_OK queremos voltar a inciar outra comunicação para enviar o telegrama seguinte
   if (int(ESPrx[0]) == 4) {
-    delay(100);
-    Serial.write(5);
+    delay(200);
+    Serial2.write(5);
   }
 }
 
@@ -247,7 +269,7 @@ void lsv2_EnviarFicheiroNC() {
     A função retorna o DECIMAL do caracter correspondente à tabela ASCII
 */
 int BCC(String strToConvert) {
-  Serial.println(strToConvert);
+
   strToConvert.toUpperCase();
   int comparingResult = 0;
   for (int i = 0; i < (strToConvert.length()) ; i++) {
