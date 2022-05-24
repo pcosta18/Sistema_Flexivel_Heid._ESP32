@@ -1,4 +1,3 @@
-
 String ESPrx = ""; //Mensagem recebida no Rx do esp incluindo caracteres de controlo
 String telegramaRecebido = ""; //Mensagem recebida no Rx do esp sem caracteres de controlo, apenas o telegrama
 String MensagemEnviar = ""; // Mensagem a enviar no telegrama da fase de transferencia de dados
@@ -8,7 +7,24 @@ bool FaseRepouso = false;
 bool espEmissor = false;
 bool espRecetor = false;
 int EnviarFicheiro_Counter = 0;
-bool EnviarFicheiro = true;
+bool EnviarFicheiro_Controlo = true;
+String ProgramaNCTeste = "BEGIN PGM 151 MM\0"
+                         "BLK FORM 0.1 Z X + 0 Y + 0 Z - 20\0"
+                         "BLK FORM 0.2 X + 100 Y + 100 Z + 0\0"
+                         "TOOL DEF 1 L + 0 R + 4\0"
+                         "TOOL CALL 1 Z S4000\0"
+                         "L Z + 100 R0 F MAX\0"
+                         "L X + 20 Y + 30 R0 F MAX M3\0"
+                         "L Z + 2 R0 F MAX M8\0"
+                         "L Z - 22 R0 F400\0"
+                         "L Z + 2 R0 F MAX\0"
+                         "L X + 50 Y + 70 R0 F MAX\0"
+                         "L Z - 22 R0 F400\0"
+                         "L Z + 2 R0 F MAX\0"
+                         "L X + 75 Y + 30 R0 F MAX\0"
+                         "L Z - 22 R0 F400\0"
+                         "L Z + 100 R0 F MAX M2\0"
+                         "END PGM 151 MM\0";
 
 void setup() {
   /* Inicialização das portas séries
@@ -21,10 +37,10 @@ void setup() {
 }
 
 void loop() {
-
   /* Recepção pela porta série (A que vem da CNC) */
   int bytestoread = Serial.available();
   if (bytestoread > 0) {
+    delay(200);
     Serial.print("tenho estes bytes para ler: ");
     Serial.println(bytestoread);
     byte rx[bytestoread];
@@ -32,6 +48,12 @@ void loop() {
 
     for (int i = 0; i < (bytestoread) ; i++) {
       ESPrx += (char)rx[i];
+    }
+    Serial.print("A mensagem é esta: ");
+    Serial.println(ESPrx);
+    /* Para saber quais são as mensagens que temos que enviar */
+    if (EnviarFicheiro_Controlo) {
+      lsv2_EnviarFicheiroNC();
     }
 
     /* Passagem de caracter especiais para string faz-se assim:
@@ -79,12 +101,14 @@ void loop() {
 void lsv2_FaseInquerito() {
 
   if (espRecetor) {
-    byte buff[5] = {16, 48, 2, 3, 4};    // DLE 0
-    Serial.write(buff, 5);
+    byte buff[5] = {16, 48};    // DLE 0
+    Serial.write(buff, 2);
+    Serial.println("Enviei o caracter 16 48");
     espRecetor = false;
   }
   if (espEmissor) {
     Serial.write(5);
+    Serial.println("Eu percebi o caracter 5 ");
     espEmissor = false;
   }
   ESPrx = "";
@@ -101,12 +125,13 @@ void lsv2_TransferenciaDeDados() {
     Serial.println(telegramaRecebido);
     byte buff[2] = {16, 49};
     Serial.write(buff, 2);
+    Serial.println("Eu percebi o caracter 16 49 ");
     espRecetor = false;
   }
 
   if (espEmissor) {
-    String ESPtx = "T_OK" ;
-    int tamanhoMensagem = ESPtx.length();
+
+    int tamanhoMensagem = MensagemEnviar.length();
     byte buffByte[tamanhoMensagem + 5];
     for (int i = 0; i < tamanhoMensagem; i++) {
       if (i == 0) {
@@ -114,31 +139,33 @@ void lsv2_TransferenciaDeDados() {
         buffByte[1] = 2;
       }
 
-      buffByte[i + 2] = int(ESPtx[i]);
+      buffByte[i + 2] = int(MensagemEnviar[i]);
 
       if (i == (tamanhoMensagem - 1)) {
         buffByte[tamanhoMensagem + 2] = 16;
         buffByte[tamanhoMensagem + 3] = 3;
-        buffByte[tamanhoMensagem + 4] = BCC(ESPtx);
+        buffByte[tamanhoMensagem + 4] = BCC(MensagemEnviar);
       }
 
     }
-    Serial.println("Mandei a mensagem");
     Serial.write(buffByte, (tamanhoMensagem + 5));
+    Serial.println("Mensagem que enviei foi");
+    Serial.println(MensagemEnviar);
     espEmissor = false;
+    MensagemEnviar = "";
   }
   ESPrx = "";
 }
 
 /* Se recebi um EOT da CNC quer dizer que a comunicação vai terminar e não preciso de fazer nada, apenas apagar o ESPrx
-   Se recebi DLE 1 então tenho que mandar para a CNC EOT para terminar a comunicação
-*/
+   Se recebi DLE 1 então tenho que mandar para a CNC EOT para terminar a comunicação */
 void lsv2_FaseRepouso() {
 
   //Se eu receber o EOT não preciso de fazer nada, só se quiser enviar
   if (espEmissor) {
     // Enviar o caracter EOT
     Serial.write(4);
+    Serial.println("Mandei o caracter 4");
     espEmissor = false;
   }
 
@@ -147,8 +174,65 @@ void lsv2_FaseRepouso() {
 }
 
 
-int BCC(String strToConvert) {
-  /* Função para calcular o BCC do LSV2
+void lsv2_EnviarFicheiroNC() {
+
+  // Enviar ENQ para estabelecer uma comunicação e estabelecer a primeira mensagem a ser enviada
+  if (EnviarFicheiro_Counter == 0 ) {
+    espEmissor = true;
+    MensagemEnviar = "A_LGFILE";
+    lsv2_FaseInquerito();
+    EnviarFicheiro_Counter++;
+  }
+  // Enviar o Nome do Ficheiro
+  if (EnviarFicheiro_Counter == 1 && telegramaRecebido == "T_OK" ) {
+    telegramaRecebido = "";
+    String identificador = "C_FL";
+    String nomeFicheiro = "PECATESTE.H\0";  // Cuidado que isto tudo não pode levar mais que 80 bytes (80 caracteres)
+    MensagemEnviar = identificador + nomeFicheiro;
+    EnviarFicheiro_Counter++;
+  }
+
+  // Enviar o FileBlock ou o texto do program. Não esquecer que o tamanho máximo é de 1024 - 4 = 1020
+  if (EnviarFicheiro_Counter == 2 && telegramaRecebido == "T_OK" ) {
+    telegramaRecebido = "";
+    String identificador = "S_FL";
+    MensagemEnviar = identificador + ProgramaNCTeste;
+    EnviarFicheiro_Counter++;
+  }
+
+  // Dizer que acabmos de mandar a mensagem. Não esquecer que este identifcador não requeres reposta T_OK por parte da CNC
+  if (EnviarFicheiro_Counter == 3 && telegramaRecebido == "T_OK" ) {
+    telegramaRecebido = "";
+    MensagemEnviar = "T_FD";
+    EnviarFicheiro_Counter++;
+  }
+
+  // Se ele reconhecer a mensagem "T_FD" que enviei, então podemos passar para o logout.
+  if (EnviarFicheiro_Counter == 4 && int(ESPrx[0]) == 16 && int(ESPrx[1]) == 49  ) {
+    espEmissor = true;
+    lsv2_FaseRepouso();
+    delay(400);
+    Serial.write(5);
+    MensagemEnviar = "A_LO";
+    EnviarFicheiro_Counter++;
+  }
+
+  // Acabou a comunicação
+  if (EnviarFicheiro_Counter == 5 && telegramaRecebido == "T_OK" ) {
+    telegramaRecebido = "";
+    EnviarFicheiro_Counter = 0;
+    EnviarFicheiro_Controlo = false;
+  }
+
+  // Isto está aqui porque quando recebemos o T_OK queremos voltar a inciar outra comunicação para enviar o telegrama seguinte
+  if (int(ESPrx[0]) == 4) {
+    delay(100);
+    Serial.write(5);
+  }
+}
+
+
+/* Função para calcular o BCC do LSV2
     Uma tipica mensagem em LSV2 é algo como <DLE><STX>telegrama<DLE><ETX><BCC>
     Para o cálculo do BCC os caracteres <DLE><STX> não contam
     O input da função é o telegrama a ser convertido sem contar com os caracteres especiais
@@ -161,7 +245,8 @@ int BCC(String strToConvert) {
     No loop faz-se a comparação do telegrama
     No final faz-se a comparação com o decimal 3 correspondente ao caracter <ETX>
     A função retorna o DECIMAL do caracter correspondente à tabela ASCII
-  */
+*/
+int BCC(String strToConvert) {
   Serial.println(strToConvert);
   strToConvert.toUpperCase();
   int comparingResult = 0;
@@ -171,13 +256,5 @@ int BCC(String strToConvert) {
   comparingResult = comparingResult ^ 3;
   Serial.print("Resultado final da conversão do BCC: ");
   Serial.println(comparingResult);
-
   return comparingResult;
-}
-
-void lsv2_EnviarFicheiroNC() {
-
-
-  
-
 }
