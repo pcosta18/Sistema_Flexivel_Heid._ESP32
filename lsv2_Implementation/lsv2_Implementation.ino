@@ -23,7 +23,9 @@ String ProgramaNCTeste = "BEGIN PGM 151 MM\n"                        // Programa
                          "L X + 75 Y + 30 R0 F MAX\n"
                          "L Z - 22 R0 F400\n"
                          "L Z + 100 R0 F MAX M2\n"
-                         "END PGM 151 MM\n";
+                         "END PGM 151 MM";
+unsigned long previousMillis_Timer1 = 0;                            // Timer caso a receção da mensagem seja desconhecida e não compare com nada (<ACK>, mensagens de erro, etc)
+unsigned long Timer1_Interval = 20000;                              // 20 segundos
 
 void setup() {
   /* Inicialização das portas séries
@@ -40,17 +42,23 @@ void setup() {
 }
 
 void loop() {
+  //implementação do timer para eliminar mensagens não interpretadas
+  if (millis() - previousMillis_Timer1 > Timer1_Interval) {
+    previousMillis_Timer1 = millis();
+    ESPrx2 = "";
+  }
+
   /* Para fazer a inicialização do envio de ficheiro enquanto não há mais nenhum input
-     colocar no ide : lsv2_EnviarFicheiroNC */
-  int bytestoread0 = Serial.available();
-  if (bytestoread0 > 0) {
+    COLOCAR NO ide : lsv2_EnviarFicheiroNC */
+  int bytestoread2 = Serial.available();
+  if (bytestoread2 > 0) {
     delay(200);
     Serial.print("tenho estes bytes para ler da porta 0: ");
-    Serial.println(bytestoread0);
-    byte rx0[bytestoread0];
-    Serial.readBytes(rx0, bytestoread0);
+    Serial.println(bytestoread2);
+    byte rx0[bytestoread2];
+    Serial.readBytes(rx0, bytestoread2);
 
-    for (int i = 0; i < (bytestoread0) ; i++) {
+    for (int i = 0; i < (bytestoread2) ; i++) {
       ESPrx0 += (char)rx0[i];
     }
 
@@ -64,16 +72,17 @@ void loop() {
   }
 
   /* Recepção pela porta série 2 (A que vem da CNC) */
-  int bytestoread2 = Serial2.available();
-  if (bytestoread2 > 0) {
+  int bytestoread = Serial2.available();
+  if (bytestoread > 0) {
     delay(200);
+    previousMillis_Timer1 = millis();
     Serial.print("tenho estes bytes para ler da porta 2 (CNC): ");
-    Serial.println(bytestoread2);
-    byte rx2[bytestoread2];
-    Serial2.readBytes(rx2, bytestoread2);
+    Serial.println(bytestoread);
+    byte rx[bytestoread];
+    Serial2.readBytes(rx, bytestoread);
 
-    for (int i = 0; i < (bytestoread2) ; i++) {
-      ESPrx2 += (char)rx2[i];
+    for (int i = 0; i < (bytestoread) ; i++) {
+      ESPrx2 += (char)rx[i];
     }
     Serial.print("A mensagem que chegou é esta: ");
     Serial.println(ESPrx2);
@@ -157,7 +166,6 @@ void lsv2_TransferenciaDeDados() {
 
   if (espEmissor) {
     int tamanhoMensagem = MensagemEnviar.length();
-    //Passagem para um bloco de mensagem como prevê o protocolo
     byte buffByte[tamanhoMensagem + 5];
     for (int i = 0; i < tamanhoMensagem; i++) {
       if (i == 0) {
@@ -179,8 +187,7 @@ void lsv2_TransferenciaDeDados() {
     Serial.println(MensagemEnviar);
     espEmissor = false;
     MensagemEnviar = "";
-    //limpar o array para evitar confusões apesar de não ser propriamente necessário
-    memset(buffByte_tx2, 0, 1024);
+    memset(buffByte_tx2, 0, 1024); //limpar o array para evitar confusões apesar de não ser necessário
   }
   ESPrx2 = "";
 }
@@ -227,6 +234,14 @@ void lsv2_EnviarFicheiroNC() {
     String identificador = "S_FL";
     MensagemEnviar = identificador + ProgramaNCTeste;
     MsgToByteArray(MensagemEnviar);
+    EnviarFicheiro_Counter++;
+  }
+
+  // Dizer que acabmos de mandar a mensagem. Não esquecer que este identifcador não requeres reposta T_OK por parte da CNC
+  if (EnviarFicheiro_Counter == 3 && telegramaRecebido == "T_OK" ) {
+    telegramaRecebido = "";
+    MensagemEnviar = "T_FD" + ProgramaNCTeste;
+    MsgToByteArray(MensagemEnviar);
     // Passagem dos \n para \0
     for (int i = 0; i < MensagemEnviar.length(); i++) {
       if (buffByte_tx2[i] == 10) {
@@ -236,20 +251,12 @@ void lsv2_EnviarFicheiroNC() {
     EnviarFicheiro_Counter++;
   }
 
-  // Dizer que acabmos de mandar a mensagem. Não esquecer que este identifcador não requeres reposta T_OK por parte da CNC
-  if (EnviarFicheiro_Counter == 3 && telegramaRecebido == "T_OK" ) {
-    telegramaRecebido = "";
-    MensagemEnviar = "T_FD";
-    MsgToByteArray(MensagemEnviar);
-    EnviarFicheiro_Counter++;
-  }
-
   // Se a CNC reconhecer a mensagem "T_FD" que o PC enviou, então podemos passar para o logout
   // Tem que se sobrepor o processo automático do lsv2 uma vez que esta mensagem não requer resposta T_OK
   if (EnviarFicheiro_Counter == 4 && int(ESPrx2[0]) == 16 && int(ESPrx2[1]) == 49  ) {
     espEmissor = true;
     lsv2_FaseRepouso();
-    delay(400);
+    delay(1000);
     Serial2.write(5);
     MensagemEnviar = "A_LO";
     MsgToByteArray(MensagemEnviar);
@@ -264,7 +271,7 @@ void lsv2_EnviarFicheiroNC() {
   }
 
   // Isto está aqui porque quando recebemos o T_OK queremos voltar a inciar outra comunicação para enviar o telegrama seguinte
-  if (int(ESPrx2[0]) == 4) {
+  if (int(ESPrx2[0]) == 4 & EnviarFicheiro_Controlo == true) {
     delay(200);
     Serial2.write(5);
   }
